@@ -1,0 +1,239 @@
+# Библиотеки
+import json
+import logging
+import random
+import time
+import schedule
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
+from ollama import chat 
+
+# Вставить сюда свой телеграмм-токен
+TELEGRAM_TOKEN = ''
+# Требуется скачать и активировать языковую модель.
+local_mode = 'llama3.1'
+# Указать папку, где будут сохранятся профиль ученика
+PROFILE_FILE = 'Score.json'
+# Логирование
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+# Маленький кантейнер с прмерами промпта
+PROMPTS = [
+    "Объяснение концепции: Объясни, что такое квантовая механика простыми словами.",
+    "Сравнение: Сравни преимущества и недостатки солнечной и ветряной энергетики.",
+    "Исторический контекст: Расскажи о причинах и последствиях Первой мировой войны.",
+    "Пошаговая инструкция: Как приготовить пасту карбонара? Напиши рецепт шаг за шагом.",
+    "Анализ данных: Каковы основные тенденции в данных о изменении климата за последние 50 лет?",
+    "Рекомендации: Посоветуй несколько книг по личностному росту.",
+    "Творческое задание: Напиши короткий рассказ о приключениях кота в большом городе.",
+    "Научный вопрос: Как работает фотосинтез в растениях?",
+    "Советы по улучшению навыков: Как улучшить свои навыки публичных выступлений?",
+    "Обсуждение текущих событий: Каковы последствия последней климатической конференции для международной политики?"
+]
+# Маленький кантейнер с прмерами промпта
+TEST_QUESTIONS = [
+    "Будущее технологий: Напишите промпт, который позволит получить прогнозы о том, как технологии изменят повседневную жизнь через 10 лет.",
+    "Изменение климата: Создайте промпт для обсуждения возможных решений проблемы изменения климата, включая как индивидуальные, так и глобальные действия.",
+    "Культура и искусство: Напишите промпт, который исследует, как искусство отражает культурные изменения в обществе.",
+    'Образование в цифровую эпоху: Сформулируйте промпт, который запрашивает идеи по улучшению образовательного процесса с помощью технологий.',
+    'Психология и ментальное здоровье: Создайте промпт для обсуждения способов поддержки психического здоровья в условиях современной жизни.',
+    'Социальные сети: Напишите промпт, исследующий влияние социальных сетей на межличностные отношения и общественное мнение.',
+    'Этические дилеммы в науке: Сформулируйте промпт, который предлагает рассмотреть этические вопросы, возникающие в процессе научных исследований.',
+    'Глобализация: Создайте промпт для обсуждения как положительных, так и отрицательных последствий глобализации для разных культур.',
+    'Здравоохранение и технологии: Напишите промпт, который позволит получить идеи о том, как технологии могут улучшить доступ к медицинской помощи.',
+    'Будущее работы: Сформулируйте промпт, который исследует, как изменения в технологиях и экономике могут повлиять на будущее профессий и рынок труда.'
+]
+# Хранилеще изменчивых функций
+Safe_prompt = None
+Sourse_answer = ''
+# Функция ежедневной отправки сообщений.
+async def send_daily_prompt():
+    prompt = random.choice(PROMPTS)
+    await send_message_to_user(prompt)
+async def send_message_to_user(prompt: str):
+    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    async with application:
+        await application.bot.send_message(chat_id='YOUR_CHAT_ID', text = prompt)
+# Функия отправки темы для теста.
+async def send_telegram_message():
+    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    async with application:
+        await application.bot.send_message(chat_id='YOUR_CHAT_ID', text = Safe_prompt)
+# Функция запуска бота
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    schedule.every().day.at("13:55").do(send_daily_prompt)
+
+    keyboard = [
+        [InlineKeyboardButton("Сохранить профиль", callback_data='function1')],
+        [InlineKeyboardButton("Показать профиль", callback_data='function2')],
+        [InlineKeyboardButton("Тест промпта", callback_data='function3')],
+        [InlineKeyboardButton("Пример хорошего промпита", callback_data='function4')],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text('Добро пожаловать! Выберите действие:', reply_markup = reply_markup)
+# Функция нажатий кнопок
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE, application: Application) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == 'statistic':
+        user = update.effective_user
+        profile_file = f'user_profile_{user.id}.json'
+
+        try:
+            with open(profile_file, 'r') as f:
+                user_profile = json.load(f)
+        except FileNotFoundError:
+            user_profile = {
+                "id": user.id,
+                "username": user.username,
+                "language_code": user.language_code,
+                "function3_usage": 0
+            }
+
+        function3_usage = user_profile.get("function3_usage", 0)
+        await application.bot.send_message(chat_id=update.effective_chat.id, text=f"Ваша статистика: Количество пройденных тестов: {function3_usage}")
+
+    elif query.data == 'function1':
+        user = update.effective_user
+        profile_file = f'user_profile_{user.id}.json'
+
+        try:
+            with open(profile_file, 'r') as f:
+                user_profile = json.load(f)
+        except FileNotFoundError:
+            user_profile = {
+                "id": user.id,
+                "username": user.username,
+                "language_code": user.language_code,
+                "function3_usage": 0
+            }
+
+        with open(profile_file, 'w') as f:
+            json.dump(user_profile, f, ensure_ascii=False, indent=4)
+        await application.bot.send_message(chat_id=update.effective_chat.id, text=f"Ваш профиль сохранён.")
+
+    elif query.data == 'function2':
+        user = update.effective_user
+        profile_file = f'user_profile_{user.id}.json'
+        try:
+            with open(profile_file, 'r') as f:
+                user_profile = json.load(f)
+                profile_info = f"ID: {user_profile['id']}\nUsername: {user_profile['username']}\nРегион: {user_profile['language_code']}\nКоличество пройденых тестов: {user_profile.get('function3_usage', 0)}"
+                await application.bot.send_message(chat_id=update.effective_chat.id, text=f"Ваш профиль:\n{profile_info}")
+        except FileNotFoundError:
+            await application.bot.send_message(chat_id=update.effective_chat.id, text="Профиль не найден. Сохраните профиль с помощью функции 1.")
+
+    elif query.data == 'function3':
+        user = update.effective_user
+        profile_file = f'user_profile_{user.id}.json'
+        try:
+            with open(profile_file, 'r') as f:
+                user_profile = json.load(f)
+        except FileNotFoundError:
+            user_profile = {
+                "id": user.id,
+                "username": user.username,
+                "language_code": user.language_code,
+                "function3_usage": 0
+            }
+        if "function3_usage" not in user_profile:
+            user_profile["function3_usage"] = 0
+
+        user_profile["function3_usage"] += 1
+
+        with open(profile_file, 'w') as f:
+            json.dump(user_profile, f, ensure_ascii=False, indent=4)
+
+        prompt_Test = random.choice(TEST_QUESTIONS)
+        Safe_prompt = prompt_Test
+        send_telegram_message
+        await application.bot.send_message(chat_id=update.effective_chat.id, text=f"Тема вашего теста:\n{Safe_prompt}")
+        await application.bot.send_message(chat_id=update.effective_chat.id, text="Введите ваш промпт:")
+
+    elif query.data == 'function4':
+        prompt = random.choice(PROMPTS)
+        await application.bot.send_message(chat_id=update.effective_chat.id, text=f"Вот вам пример хорошего промпта:\n{prompt}")
+# Обработка промпта ученика
+async def evaluate_prompt(prompt: str) -> dict:
+    try:
+        response = chat(model=local_mode, messages=[{"role": "user", "content": f"Ты оценщик промпта и сейчас оцениваешь промпт ученика, давая цифровую, целочисленную оценку. Оцени промпт пользователя на данную тему: {Safe_prompt} по критерию: Конкретность вопроса. Дай ответ только в виде целого числа от 1 до 10. Промпт ученика, который вам нужно оценить: {prompt}. Не пиши ничего кроме числовой оценки от 1 до 10. Будь точен в оценивании промпта."}])
+        logger.debug(f"Response content: {response.message.content}")
+        if response.message.content.isdigit():
+            evaluation = {
+                "Конкретность запроса": int(response.message.content.strip()),
+                "Указание точных параметров": 0,
+                "Использование референсов": 0,
+            }
+            x1 = int(response.message.content.strip())
+            response = chat(model=local_mode, messages=[{"role": "user", "content": f"Ты оценщик промпта и сейчас оцениваешь промпт ученика, давая цифровую, целочисленную оценку. Оцени промпт пользователя на данную тему: {Safe_prompt} по критерию: Указание точных параметров. Дай ответ только в виде целого числа от 1 до 10. Промпт ученика, который вам нужно оценить: {prompt}. Не пиши ничего кроме числовой оценки от 1 до 10. Будь точен в оценивании промпта."}])
+            logger.debug(f"Response content: {response.message.content}")
+            if response.message.content.isdigit():
+                evaluation = {
+                    "Конкретность запроса": x1,
+                    "Указание точных параметров": int(response.message.content.strip()),
+                    "Использование референсов": 0,
+                }
+                x2 = int(response.message.content.strip())
+                response = chat(model=local_mode, messages=[{"role": "user", "content": f"Ты оценщик промпта и сейчас оцениваешь промпт ученика, давая цифровую, целочисленную оценку. Оцени промпт пользователя на данную тему: {Safe_prompt} по критерию: Использование референсов. Дай ответ только в виде целого числа от 1 до 10. Промпт ученика, который вам нужно оценить: {prompt}. Не пиши ничего кроме числовой оценки от 1 до 10. Будь точен в оценивании промпта."}])
+                logger.debug(f"Response content: {response.message.content}")
+                if response.message.content.isdigit():
+                    evaluation = {
+                        "Конкретность запроса": x1,
+                        "Указание точных параметров": x2,
+                        "Использование референсов": int(response.message.content.strip()),
+                    }
+            return evaluation
+
+        scores = response.message.content.split('\n')
+
+        if len(scores) < 3:
+            logger.error(f"Unexpected response format: {response.message.content}")
+            return {
+                "Конкретность запроса": 0,
+                "Указание точных параметров": 0,
+                "Использование референсов": 0,
+            }
+        return evaluation
+    except Exception as e:
+        logger.error(f"Ошибка в оценке промпта: {e}")
+        return {
+            "Конкретность запроса": 0,
+            "Указание точных параметров": 0,
+            "Использование референсов": 0,
+        }
+# Обработка сообщений
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_prompt = update.message.text
+    if update.message.reply_to_message and update.message.reply_to_message.text == "Введите ваш промпт:":
+        evaluation = await evaluate_prompt(user_prompt)
+        if evaluation:
+            response_message = (
+                f"Оценка для вашего промпта:\n"
+                f"Конкретность запроса: {evaluation['Конкретность запроса']}/10\n"
+                f"Указание точных параметров: {evaluation['Указание точных параметров']}/10\n"
+                f"Использование референсов: {evaluation['Использование референсов']}/10\n"
+            )
+            await update.message.reply_text(response_message)
+        else:
+            await update.message.reply_text("Не удалось оценить промпт. Пожалуйста, попробуйте снова.")
+    else:
+        response = "Ошибка"
+        await update.message.reply_text(response)
+# Активация
+def main() -> None:
+    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(lambda update, context: button(update, context, application)))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    application.run_polling()
+
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
+if __name__ == '__main__':
+    main()
